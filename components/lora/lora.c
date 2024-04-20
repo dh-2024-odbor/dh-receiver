@@ -333,7 +333,7 @@ int lora_init(void)
        .quadhd_io_num = -1,
        .max_transfer_sz = 0};
 
-   ret = spi_bus_initialize(VSPI_HOST, &bus, 0);
+   ret = spi_bus_initialize(SPI2_HOST, &bus, 0);
    assert(ret == ESP_OK);
 
    spi_device_interface_config_t dev = {
@@ -343,7 +343,7 @@ int lora_init(void)
        .queue_size = 1,
        .flags = 0,
        .pre_cb = NULL};
-   ret = spi_bus_add_device(VSPI_HOST, &dev, &__spi);
+   ret = spi_bus_add_device(SPI2_HOST, &dev, &__spi);
    assert(ret == ESP_OK);
 
    /*

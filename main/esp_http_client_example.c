@@ -65,7 +65,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
         ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
         break;
     case HTTP_EVENT_ON_HEADER:
-        printf("EVENT ON HEADER\n");
+        //printf("EVENT ON HEADER\n");
         ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
         break;
     case HTTP_EVENT_ON_DATA:
@@ -151,7 +151,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 
 // Client config
 static esp_http_client_config_t s_config = {
-    .url = "https://api.one-account.io/v1/auth/login",
+    .url = "https://dragonhack.ttcloud.io/api/data",
     .event_handler = _http_event_handler,
     .cert_pem = gtsr1_root_cert_pem_start,
     .is_async = true,
@@ -162,10 +162,16 @@ static void https_async(esp_http_client_handle_t client, lora_packet_t *packet)
 {
     printf("Testing HTTPS async\n");
 
-    const char *payload = (const char *)packet->payload;
+    char *payload = (const char *)(packet->payload);
+
+    uint32_t node_id = *((uint32_t*) payload);
+    uint32_t message_id = *(((uint32_t*) payload) + 1);
+
+    ESP_LOGI("main", "Payload: node_id: %lu, message_id: %lu", node_id, message_id);
 
     esp_err_t err;
     esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_header(client, "Authorization", "Basic uO0Ofm2uGvOYG3p67kffMlUBP7uYPM");
     esp_http_client_set_post_field(client, payload, packet->payload_size);
 
     while (1)
@@ -176,11 +182,12 @@ static void https_async(esp_http_client_handle_t client, lora_packet_t *packet)
             break;
         }
     }
+    printf("Finished esp_http_client_perform\n");
     if (err == ESP_OK)
     {
         ESP_LOGI(TAG, "HTTPS Status = %d, content_length = %" PRIu64,
-                 esp_http_client_get_status_code(client),
-                 esp_http_client_get_content_length(client));
+        esp_http_client_get_status_code(client),
+        esp_http_client_get_content_length(client));
     }
     else
     {
@@ -194,15 +201,17 @@ static void http_test_task(void *pvParameters)
     esp_http_client_handle_t client = esp_http_client_init(&s_config);
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
 
-    lora_packet_t *packet;
+    lora_packet_t packet;
 
     while (1)
     {
         BaseType_t status = xQueueReceive(s_lora_queue_handler, &packet, portMAX_DELAY);
+        
+        printf("Received packet\n");
 
         if (status == pdTRUE)
         {
-            https_async(client, packet);
+            https_async(client, &packet);
         }
     }
 
@@ -228,7 +237,7 @@ void lora_receive_task(void *pvParameters)
             packet.payload_size = lora_receive_packet(packet.payload, 256);
             uint32_t node_id = *((uint32_t *)packet.payload);
             uint32_t message_id = *(((uint32_t *)packet.payload) + 1);
-            ESP_LOGI("main", "Received packet with size %d, node_id: %lu, message_id: %lu", packet.payload_size, node_id, message_id);
+            ESP_LOGW("main", "Received packet with size %d, node_id: %lu, message_id: %lu", packet.payload_size, node_id, message_id);
             xQueueSend(s_lora_queue_handler, &packet, portMAX_DELAY);
             lora_receive();
         }
@@ -268,7 +277,7 @@ void app_main(void)
     lora_set_coding_rate(5);
 
     // Creates a queue for the received lora packets
-    s_lora_queue_handler = xQueueCreate(1, sizeof(lora_packet_t *));
+    s_lora_queue_handler = xQueueCreate(1, sizeof(lora_packet_t));
 
     // Connects to the wifi network
     ESP_ERROR_CHECK(wifi_connect());
