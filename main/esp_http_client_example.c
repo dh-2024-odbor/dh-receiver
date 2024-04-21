@@ -24,6 +24,9 @@
 // LoRa radio operating frequency in europe
 #define LORA_FREQ 433e6
 
+// Size of lora duplication queue. Must not be larger than 256.
+#define LORA_DUPLICATE_HISTORY_SIZE 100
+
 // Log tag
 static const char *TAG = "HTTP_CLIENT";
 
@@ -42,6 +45,16 @@ typedef struct
     uint8_t *payload;
     size_t payload_size;
 } lora_packet_t;
+
+typedef struct
+{
+    uint32_t node_id;
+    uint32_t message_id;
+} lora_header_t;
+
+// Packet history used for deduplication of packets if by chance any relay nodes see each other
+static lora_header_t lora_packet_history[LORA_DUPLICATE_HISTORY_SIZE];
+static uint8_t lora_next_history_insert = 0;
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -219,6 +232,23 @@ static void http_test_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+uint8_t lora_check_packet_duplicate(lora_header_t header) {
+    for(int i = 0; i < LORA_DUPLICATE_HISTORY_SIZE; i++) {
+        if(lora_packet_history[i].message_id == header.message_id && lora_packet_history[i].node_id == header.node_id) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void lora_add_to_history(lora_header_t header) {
+    if(lora_next_history_insert >= LORA_DUPLICATE_HISTORY_SIZE) {
+        lora_next_history_insert = 0;
+    };
+
+    lora_packet_history[lora_next_history_insert] = header;
+}
+
 void lora_receive_task(void *pvParameters)
 {
     int recv_size;
@@ -235,10 +265,16 @@ void lora_receive_task(void *pvParameters)
         while (lora_received())
         {
             packet.payload_size = lora_receive_packet(packet.payload, 256);
-            uint32_t node_id = *((uint32_t *)packet.payload);
-            uint32_t message_id = *(((uint32_t *)packet.payload) + 1);
-            ESP_LOGW("main", "Received packet with size %d, node_id: %lu, message_id: %lu", packet.payload_size, node_id, message_id);
-            xQueueSend(s_lora_queue_handler, &packet, portMAX_DELAY);
+            lora_header_t header;
+            header.node_id = *((uint32_t *)packet.payload);
+            header.message_id = *(((uint32_t *)packet.payload) + 1);
+            ESP_LOGW("main", "Received packet with size %d, node_id: %lu, message_id: %lu", packet.payload_size, header.node_id, header.message_id);
+            if(lora_check_packet_duplicate(header))
+            {
+                xQueueSend(s_lora_queue_handler, &packet, portMAX_DELAY);
+            }
+            lora_add_to_history(header);
+            
             lora_receive();
         }
         vTaskDelay(1);
@@ -280,7 +316,7 @@ void app_main(void)
     s_lora_queue_handler = xQueueCreate(1, sizeof(lora_packet_t));
 
     // Connects to the wifi network
-    ESP_ERROR_CHECK(wifi_connect());
+    ESP_ERROR_CHECK(example_connect());
     ESP_LOGI(TAG, "Connected to AP, begin http");
 
     // Creates a lora receive task which
